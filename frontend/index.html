@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Goal Setting & Tracking Portal</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-container">
+        <div class="login-box">
+            <h1>🎯 Goal Tracking Portal</h1>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="username" required placeholder="Enter username">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="password" required placeholder="Enter password">
+                </div>
+                <button type="submit" class="btn-primary">Login</button>
+            </form>
+            <div class="demo-credentials">
+                <p><strong>Demo Credentials:</strong></p>
+                <p>Employee: john / password123</p>
+                <p>Manager: sarah / password123</p>
+                <p>Admin: admin / admin123</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App (hidden until login) -->
+    <div id="mainApp" style="display:none;">
+        <div class="container">
+            <header>
+                <h1>🎯 Goal Setting & Tracking Portal</h1>
+                <div class="user-controls">
+                    <span id="userInfo" class="user-info"></span>
+                    <button onclick="logout()" class="btn-secondary">Logout</button>
+                </div>
+            </header>
+
+            <!-- Navigation Tabs -->
+            <div class="tabs">
+                <button class="tab-btn active" onclick="showTab('goals')">📋 My Goals</button>
+                <button class="tab-btn" onclick="showTab('checkins')">🔄 Check-ins</button>
+                <button class="tab-btn" onclick="showTab('team')" id="teamTabBtn" style="display:none;">👥 Team Goals</button>
+                <button class="tab-btn" onclick="showTab('shared')" id="sharedTabBtn" style="display:none;">🔗 Shared KPIs</button>
+            </div>
+
+            <!-- Tab 1: My Goals -->
+            <div id="goalsTab" class="tab-content active">
+                <div class="goals-header">
+                    <h2>My Goal Sheet</h2>
+                    <button onclick="showCreateGoalModal()" class="btn-primary">+ Create New Goal</button>
+                </div>
+                <div id="goalsList" class="goals-list"></div>
+                <div id="weightageWarning" class="warning-message"></div>
+            </div>
+
+            <!-- Tab 2: Check-ins -->
+            <div id="checkinsTab" class="tab-content">
+                <div class="checkins-header">
+                    <h2>Quarterly Check-ins</h2>
+                    <button onclick="showCheckinModal()" class="btn-primary">Update Quarterly Progress</button>
+                </div>
+                <div id="checkinsList" class="checkins-list"></div>
+                <div id="managerCommentsList" class="manager-comments"></div>
+            </div>
+
+            <!-- Tab 3: Team Goals -->
+            <div id="teamTab" class="tab-content">
+                <div class="team-header">
+                    <h2>Team Goals Overview</h2>
+                    <button onclick="showSharedGoalModal()" class="btn-primary">Share Department KPI</button>
+                </div>
+                <div id="teamMembersList" class="team-list"></div>
+            </div>
+
+            <!-- Tab 4: Shared KPIs -->
+            <div id="sharedTab" class="tab-content">
+                <h2>Department KPIs</h2>
+                <div id="sharedGoalsList" class="shared-list"></div>
+            </div>
+        </div>
+
+        <!-- Modals -->
+        <div id="createGoalModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeCreateGoalModal()">&times;</span>
+                <h2>Create New Goal</h2>
+                <form id="createGoalForm">
+                    <div class="form-group">
+                        <label>Thrust Area:</label>
+                        <select id="thrustArea" required>
+                            <option value="Sales">Sales</option>
+                            <option value="Marketing">Marketing</option>
+                            <option value="Product">Product</option>
+                            <option value="Engineering">Engineering</option>
+                            <option value="HR">HR</option>
+                            <option value="Finance">Finance</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Goal Title:</label>
+                        <input type="text" id="goalTitle" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Description:</label>
+                        <textarea id="goalDescription" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Unit of Measurement:</label>
+                        <select id="uom" onchange="updateTargetPlaceholder()">
+                            <option value="numeric">Numeric</option>
+                            <option value="percentage">Percentage (%)</option>
+                            <option value="timeline">Timeline</option>
+                            <option value="zero">Zero-based</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Target Value:</label>
+                        <input type="text" id="target" required>
+                        <small id="targetHint">e.g., 1000000</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Weightage (%):</label>
+                        <input type="number" id="weightage" min="10" max="100" step="5" required>
+                        <small>Minimum 10%, total across all goals must be 100%</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Quarter:</label>
+                        <select id="quarter">
+                            <option value="Q4-2024">Q4 2024</option>
+                            <option value="Q1-2025">Q1 2025</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn-primary">Submit for Approval</button>
+                </form>
+            </div>
+        </div>
+
+        <div id="checkinModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeCheckinModal()">&times;</span>
+                <h2>Quarterly Progress Update</h2>
+                <div id="checkinGoalsList"></div>
+                <button onclick="submitCheckin()" class="btn-primary">Submit Update</button>
+            </div>
+        </div>
+
+        <div id="managerCommentModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeManagerCommentModal()">&times;</span>
+                <h2>Manager Check-in Comment</h2>
+                <div id="managerCommentContent"></div>
+                <button onclick="saveManagerComment()" class="btn-primary">Save Comment</button>
+            </div>
+        </div>
+
+        <div id="sharedGoalModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeSharedGoalModal()">&times;</span>
+                <h2>Share Department KPI</h2>
+                <form id="sharedGoalForm">
+                    <div class="form-group">
+                        <label>KPI Title:</label>
+                        <input type="text" id="sharedTitle" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Description:</label>
+                        <textarea id="sharedDescription" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Unit of Measurement:</label>
+                        <select id="sharedUom">
+                            <option value="numeric">Numeric</option>
+                            <option value="percentage">Percentage (%)</option>
+                            <option value="timeline">Timeline</option>
+                            <option value="zero">Zero-based</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Target Value:</label>
+                        <input type="text" id="sharedTarget" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Primary Owner:</label>
+                        <select id="primaryOwner" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Assign to Employees:</label>
+                        <div id="employeeCheckboxes"></div>
+                    </div>
+                    <button type="submit" class="btn-primary">Share KPI</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
