@@ -29,18 +29,26 @@ async function login(event) {
             document.getElementById('userInfo').innerHTML = `👤 ${currentUser.name} (${currentUser.role})`;
             
             // Show/hide tabs based on role
-            if (currentUser.role === 'manager' || currentUser.role === 'admin') {
+            if (currentUser.role === 'manager' || currentUser.role === 'admin' || currentUser.role === 'hr') {
                 document.getElementById('teamTabBtn').style.display = 'inline-block';
                 document.getElementById('sharedTabBtn').style.display = 'inline-block';
+            }
+
+            if (currentUser.role === 'admin' || currentUser.role === 'hr') {
+                document.getElementById('adminTabBtn').style.display = 'inline-block';
             }
             
             // Load initial data
             await loadGoals();
             await loadCheckins();
             
-            if (currentUser.role === 'manager' || currentUser.role === 'admin') {
+            if (currentUser.role === 'manager' || currentUser.role === 'admin' || currentUser.role === 'hr') {
                 await loadTeamGoals();
                 await loadSharedGoals();
+            }
+
+            if (currentUser.role === 'admin' || currentUser.role === 'hr') {
+                await loadAdminDashboard();
             }
         } else {
             alert('Login failed: ' + data.error);
@@ -48,6 +56,56 @@ async function login(event) {
     } catch (error) {
         console.error('Login error:', error);
         alert('Failed to login. Make sure the backend server is running.');
+    }
+}
+
+async function loginWithAzureAD() {
+    const email = prompt('Enter Azure AD email to simulate SSO:', 'john@example.com');
+    if (!email) return;
+    const groupsText = prompt('Enter Azure AD group names (comma separated), e.g. Employees,Managers,HR:', 'Employees');
+    const groups = groupsText ? groupsText.split(',').map(g => g.trim()) : [];
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/auth/azure-login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ email, groups })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            currentUser = data.user;
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('mainApp').style.display = 'block';
+            document.getElementById('userInfo').innerHTML = `👤 ${currentUser.name} (${currentUser.role})`;
+
+            if (currentUser.role === 'manager' || currentUser.role === 'admin' || currentUser.role === 'hr') {
+                document.getElementById('teamTabBtn').style.display = 'inline-block';
+                document.getElementById('sharedTabBtn').style.display = 'inline-block';
+            }
+
+            if (currentUser.role === 'admin' || currentUser.role === 'hr') {
+                document.getElementById('adminTabBtn').style.display = 'inline-block';
+            }
+
+            await loadGoals();
+            await loadCheckins();
+
+            if (currentUser.role === 'manager' || currentUser.role === 'admin' || currentUser.role === 'hr') {
+                await loadTeamGoals();
+                await loadSharedGoals();
+            }
+
+            if (currentUser.role === 'admin' || currentUser.role === 'hr') {
+                await loadAdminDashboard();
+            }
+        } else {
+            alert('Azure AD login failed: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Azure login error:', error);
+        alert('Failed to login with Azure AD.');
     }
 }
 
@@ -128,13 +186,28 @@ function renderGoals() {
 async function createGoal(event) {
     event.preventDefault();
     
+    const thrustArea = document.getElementById('thrustArea').value;
+    const title = document.getElementById('goalTitle').value.trim();
+    const target = document.getElementById('target').value.trim();
+    const weightage = parseFloat(document.getElementById('weightage').value);
+
+    if (!title || !target || isNaN(weightage)) {
+        alert('Please complete the goal form with valid values.');
+        return;
+    }
+
+    if (weightage < 10 || weightage > 100) {
+        alert('Weightage must be a number between 10 and 100.');
+        return;
+    }
+
     const goalData = {
-        thrustArea: document.getElementById('thrustArea').value,
-        title: document.getElementById('goalTitle').value,
+        thrustArea,
+        title,
         description: document.getElementById('goalDescription').value,
         uom: document.getElementById('uom').value,
-        target: document.getElementById('target').value,
-        weightage: parseFloat(document.getElementById('weightage').value),
+        target,
+        weightage,
         quarter: document.getElementById('quarter').value
     };
     
@@ -592,7 +665,7 @@ async function createSharedGoal(event) {
 }
 
 // UI Helpers
-function showTab(tabName) {
+function showTab(event, tabName) {
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
     });
@@ -601,13 +674,16 @@ function showTab(tabName) {
     });
     
     document.getElementById(`${tabName}Tab`).classList.add('active');
-    event.target.classList.add('active');
+    if (event && event.currentTarget) {
+        event.currentTarget.classList.add('active');
+    }
     
     // Refresh content
     if (tabName === 'goals') loadGoals();
     else if (tabName === 'checkins') loadCheckins();
     else if (tabName === 'team') loadTeamGoals();
     else if (tabName === 'shared') loadSharedGoals();
+    else if (tabName === 'admin') loadAdminDashboard();
 }
 
 function showCreateGoalModal() {
@@ -653,11 +729,296 @@ function escapeHtml(str) {
 document.getElementById('loginForm')?.addEventListener('submit', login);
 document.getElementById('createGoalForm')?.addEventListener('submit', createGoal);
 document.getElementById('sharedGoalForm')?.addEventListener('submit', createSharedGoal);
+document.getElementById('adminCycleForm')?.addEventListener('submit', saveCycleSetting);
 
 // Close modals when clicking outside
 window.onclick = function(event) {
     if (event.target.classList.contains('modal')) {
         event.target.style.display = 'none';
+    }
+}
+
+async function loadAdminDashboard() {
+    try {
+        const [summaryRes, orgRes, cycleRes, goalsRes, auditRes, analyticsRes, escalationRes] = await Promise.all([
+            fetch(`${API_BASE_URL}/admin/summary`, { credentials: 'include' }),
+            fetch(`${API_BASE_URL}/admin/org`, { credentials: 'include' }),
+            fetch(`${API_BASE_URL}/admin/cycles`, { credentials: 'include' }),
+            fetch(`${API_BASE_URL}/admin/goals`, { credentials: 'include' }),
+            fetch(`${API_BASE_URL}/admin/audit`, { credentials: 'include' }),
+            fetch(`${API_BASE_URL}/admin/analytics/overview`, { credentials: 'include' }),
+            fetch(`${API_BASE_URL}/admin/escalations`, { credentials: 'include' })
+        ]);
+
+        if (!summaryRes.ok || !orgRes.ok || !cycleRes.ok) {
+            console.warn('Admin dashboard failed to load.');
+            return;
+        }
+
+        const summary = await summaryRes.json();
+        const orgUsers = await orgRes.json();
+        const cycle = await cycleRes.json();
+        const adminGoals = goalsRes.ok ? await goalsRes.json() : [];
+        const auditLogs = auditRes.ok ? await auditRes.json() : [];
+        const analyticsData = analyticsRes.ok ? await analyticsRes.json() : null;
+            const trendData = await fetch(`${API_BASE_URL}/admin/analytics/trends`, { credentials: 'include' }).then(r => r.ok ? r.json() : null);
+            const rulesData = await fetch(`${API_BASE_URL}/admin/escalation-rules`, { credentials: 'include' }).then(r => r.ok ? r.json() : []);
+        const qoqData = await fetch(`${API_BASE_URL}/admin/analytics/qoq`, { credentials: 'include' }).then(r => r.ok ? r.json() : null);
+        const heatmapData = await fetch(`${API_BASE_URL}/admin/analytics/heatmap`, { credentials: 'include' }).then(r => r.ok ? r.json() : []);
+        const distributionData = await fetch(`${API_BASE_URL}/admin/analytics/distribution`, { credentials: 'include' }).then(r => r.ok ? r.json() : null);
+        const managerEffectiveness = await fetch(`${API_BASE_URL}/admin/analytics/manager-effectiveness`, { credentials: 'include' }).then(r => r.ok ? r.json() : []);
+        const escalations = escalationRes.ok ? await escalationRes.json() : [];
+
+            renderAdminDashboard(summary, orgUsers, cycle, adminGoals, auditLogs, analyticsData, escalations, trendData, rulesData, qoqData, heatmapData, distributionData, managerEffectiveness);
+    } catch (error) {
+        console.error('Error loading admin dashboard:', error);
+    }
+}
+
+async function runEscalationCheck() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/escalations/run`, {
+            method: 'POST',
+            credentials: 'include'
+        });
+
+        if (response.ok) {
+            alert('Escalation check completed. Refreshing dashboard...');
+            await loadAdminDashboard();
+        } else {
+            const data = await response.json();
+            alert('Failed to run escalation checks: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error running escalation check:', error);
+        alert('Failed to run escalation checks.');
+    }
+}
+
+async function runReminderCheck() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/reminders/run`, {
+            method: 'POST',
+            credentials: 'include'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            alert('Reminders sent. See admin logs for details.');
+            await loadAdminDashboard();
+        } else {
+            const data = await response.json();
+            alert('Failed to send reminders: ' + (data.error || 'Unknown error'));
+        }
+    } catch (err) {
+        console.error('Error running reminders:', err);
+        alert('Failed to run reminders.');
+    }
+}
+
+function openEditEscalationModalById(ruleId) {
+    const rules = window.latestEscalationRules || [];
+    const rule = rules.find(r => r.id === parseInt(ruleId));
+    if (!rule) return alert('Rule not found');
+    document.getElementById('editRuleKey').value = rule.rule_key || '';
+    document.getElementById('editRuleDescription').value = rule.description || '';
+    document.getElementById('editThreshold').value = rule.threshold_days || 0;
+    document.getElementById('editActive').value = rule.active ? '1' : '0';
+    document.getElementById('editEscalationModal').style.display = 'block';
+    window._editingEscalationId = rule.id;
+}
+
+function closeEditEscalationModal() {
+    document.getElementById('editEscalationModal').style.display = 'none';
+    window._editingEscalationId = null;
+}
+
+async function saveEscalationRule(event) {
+    event.preventDefault();
+    const id = window._editingEscalationId;
+    if (!id) return alert('No rule selected');
+    const threshold_days = parseInt(document.getElementById('editThreshold').value || '0');
+    const active = document.getElementById('editActive').value === '1';
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/escalation-rules/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ threshold_days, active })
+        });
+
+        if (response.ok) {
+            alert('Escalation rule updated');
+            closeEditEscalationModal();
+            await loadAdminDashboard();
+        } else {
+            const data = await response.json();
+            alert('Failed to update: ' + (data.error || 'Unknown'));
+        }
+    } catch (err) {
+        console.error('Error updating rule', err);
+        alert('Failed to update rule');
+    }
+}
+
+document.getElementById('editEscalationForm')?.addEventListener('submit', saveEscalationRule);
+
+function renderAdminDashboard(summary, orgUsers, cycle, adminGoals = [], auditLogs = [], analyticsData = null, escalations = [], trendData = null, rulesData = [], qoqData = null, heatmapData = [], distributionData = null, managerEffectiveness = []) {
+    document.getElementById('adminSummary').innerHTML = `
+        <div class="admin-summary-card">
+            <div><strong>Total Goals</strong><span>${summary.total_goals}</span></div>
+            <div><strong>Approved</strong><span>${summary.approved_goals}</span></div>
+            <div><strong>Pending</strong><span>${summary.pending_goals}</span></div>
+            <div><strong>Average Progress</strong><span>${Math.round(summary.avg_progress || 0)}%</span></div>
+        </div>
+        <div class="admin-summary-card">
+            <h3>Department Progress</h3>
+            ${summary.department_stats.map(dep => `
+                <div class="admin-department-row">
+                    <span>${escapeHtml(dep.department)}</span>
+                    <span>${Math.round(dep.avg_progress || 0)}%</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+
+    document.getElementById('adminOrgList').innerHTML = orgUsers.map(user => `
+        <div class="admin-org-row">
+            <span>${escapeHtml(user.name)}</span>
+            <span>${escapeHtml(user.role)}</span>
+            <span>${escapeHtml(user.department)}</span>
+        </div>
+    `).join('');
+
+    document.getElementById('adminCycleInput').value = cycle.active_cycle || '';
+
+    // Render analytics summary
+    document.getElementById('adminAnalyticsSummary').innerHTML = analyticsData ? `
+        <div><strong>Total Goals</strong>: ${analyticsData.overview.total_goals}</div>
+        <div><strong>Approved</strong>: ${analyticsData.overview.approved_goals}</div>
+        <div><strong>Pending</strong>: ${analyticsData.overview.pending_goals}</div>
+        <div><strong>Average Progress</strong>: ${Math.round(analyticsData.overview.avg_progress || 0)}%</div>
+        <div class="admin-analytics-block">
+            <h4>By Thrust Area</h4>
+            ${analyticsData.byThrust.map(item => `<div>${escapeHtml(item.thrust_area)}: ${item.count} goals</div>`).join('')}
+        </div>
+        <div class="admin-analytics-block">
+            <h4>By Department</h4>
+            ${analyticsData.byDepartment.map(item => `<div>${escapeHtml(item.department)}: ${Math.round(item.avg_progress || 0)}% avg progress</div>`).join('')}
+        </div>
+    ` : '<p>No analytics data available.</p>';
+
+    // Render escalation alerts
+    document.getElementById('adminEscalationList').innerHTML = escalations.length === 0 ? '<p>No escalation alerts yet.</p>' : escalations.map(e => `
+        <div class="audit-row">
+            <div><strong>${escapeHtml(e.rule_key)}</strong> — ${escapeHtml(e.triggered_for || e.department || 'N/A')}</div>
+            <div>${escapeHtml(e.details || '')} <span class="muted">${new Date(e.created_at).toLocaleString()}</span></div>
+        </div>
+    `).join('');
+
+    document.getElementById('adminRuleList').innerHTML = rulesData.length === 0 ? '<p>No escalation rules available.</p>' : `
+        <div class="admin-analytics-block">
+            ${rulesData.map(rule => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+                    <div><strong>${escapeHtml(rule.rule_key)}</strong>: ${escapeHtml(rule.description)} — ${rule.threshold_days} days — <em>${rule.active ? 'Active' : 'Inactive'}</em></div>
+                    <div><button class="btn-secondary" onclick="openEditEscalationModalById(${rule.id})">Edit</button></div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    // keep latest rules for modal
+    window.latestEscalationRules = rulesData;
+
+    document.getElementById('adminTrendsList').innerHTML = trendData ? `
+        <div class="admin-analytics-block">
+            <h4>Goal Trend by Quarter</h4>
+            ${trendData.trends.map(item => `<div>${escapeHtml(item.quarter)}: ${item.goal_count} goals, avg ${Math.round(item.avg_progress || 0)}%</div>`).join('')}
+        </div>
+        <div class="admin-analytics-block">
+            <h4>Status Breakdown</h4>
+            ${trendData.statusBreakdown.map(item => `<div>${escapeHtml(item.status)}: ${item.count}</div>`).join('')}
+        </div>
+    ` : '<p>No trend data available.</p>';
+
+    // QoQ
+    document.getElementById('adminQoQ').innerHTML = qoqData && qoqData.data && qoqData.data.length ? `
+        <div>
+            ${qoqData.data.map(q => `<div>${escapeHtml(q.quarter)}: avg ${Math.round(q.avg_progress || 0)}% (${q.count} goals)</div>`).join('')}
+        </div>
+    ` : '<p>No QoQ data available.</p>';
+
+    // Heatmap (simple table)
+    if (heatmapData && heatmapData.length) {
+        const rows = heatmapData.map(h => `<tr><td>${escapeHtml(h.department)}</td><td>${escapeHtml(h.quarter)}</td><td>${Math.round(h.avg_progress || 0)}%</td><td>${h.count}</td></tr>`).join('');
+        document.getElementById('adminHeatmap').innerHTML = `<table class="simple-table"><thead><tr><th>Department</th><th>Quarter</th><th>Avg Progress</th><th>Goals</th></tr></thead><tbody>${rows}</tbody></table>`;
+    } else {
+        document.getElementById('adminHeatmap').innerHTML = '<p>No heatmap data available.</p>';
+    }
+
+    // Distribution
+    if (distributionData) {
+        document.getElementById('adminDistribution').innerHTML = `
+            <div><strong>By Thrust Area</strong>${distributionData.byThrust.map(b => `<div>${escapeHtml(b.thrust_area)}: ${b.count} (${Math.round(b.avg_progress||0)}% avg)</div>`).join('')}</div>
+            <div><strong>By UoM</strong>${distributionData.byUom.map(b => `<div>${escapeHtml(b.uom)}: ${b.count} (${Math.round(b.avg_progress||0)}% avg)</div>`).join('')}</div>
+            <div><strong>By Status</strong>${distributionData.byStatus.map(b => `<div>${escapeHtml(b.status)}: ${b.count}</div>`).join('')}</div>
+        `;
+    } else {
+        document.getElementById('adminDistribution').innerHTML = '<p>No distribution data available.</p>';
+    }
+
+    // Manager Effectiveness
+    if (managerEffectiveness && managerEffectiveness.length) {
+        const mgrRows = managerEffectiveness.map(m => `<tr><td>${escapeHtml(m.manager_name)}</td><td>${m.employee_count}</td><td>${m.checked_in_count}</td><td>${m.checkin_completion_rate}%</td><td>${Math.round(m.avg_progress||0)}%</td></tr>`).join('');
+        document.getElementById('adminManagerEffectiveness').innerHTML = `<table class="simple-table"><thead><tr><th>Manager</th><th>Employees</th><th>Checked-in</th><th>Completion %</th><th>Avg Progress</th></tr></thead><tbody>${mgrRows}</tbody></table>`;
+    } else {
+        document.getElementById('adminManagerEffectiveness').innerHTML = '<p>No manager effectiveness data available.</p>';
+    }
+
+    // Render goals list
+    document.getElementById('adminGoalsList').innerHTML = adminGoals.length === 0 ? '<p>No goals found.</p>' : adminGoals.map(g => `
+        <div class="admin-goal-row">
+            <div><strong>${escapeHtml(g.title)}</strong> — ${escapeHtml(g.user_name || '')}</div>
+            <div>Weight: ${g.weightage}% | Status: ${escapeHtml(g.status)}</div>
+        </div>
+    `).join('');
+
+    // Render audit logs
+    document.getElementById('adminAuditList').innerHTML = auditLogs.length === 0 ? '<p>No audit entries yet.</p>' : auditLogs.map(a => `
+        <div class="audit-row">
+            <div><strong>${escapeHtml(a.action)}</strong> by ${escapeHtml(a.user_name || 'System')}</div>
+            <div>${escapeHtml(a.details || '')} <span class="muted">${new Date(a.created_at).toLocaleString()}</span></div>
+        </div>
+    `).join('');
+}
+
+async function saveCycleSetting(event) {
+    event.preventDefault();
+    const activeCycle = document.getElementById('adminCycleInput').value.trim();
+
+    if (!activeCycle) {
+        alert('Please enter an active cycle.');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/cycles`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ active_cycle: activeCycle })
+        });
+
+        if (response.ok) {
+            alert('Active cycle updated successfully!');
+            await loadAdminDashboard();
+        } else {
+            const data = await response.json();
+            alert('Error: ' + (data.error || 'Failed to update cycle')); 
+        }
+    } catch (error) {
+        console.error('Error updating cycle:', error);
+        alert('Failed to update cycle');
     }
 }
 
@@ -676,17 +1037,25 @@ async function checkAuth() {
             document.getElementById('mainApp').style.display = 'block';
             document.getElementById('userInfo').innerHTML = `👤 ${currentUser.name} (${currentUser.role})`;
             
-            if (currentUser.role === 'manager' || currentUser.role === 'admin') {
+            if (currentUser.role === 'manager' || currentUser.role === 'admin' || currentUser.role === 'hr') {
                 document.getElementById('teamTabBtn').style.display = 'inline-block';
                 document.getElementById('sharedTabBtn').style.display = 'inline-block';
+            }
+
+            if (currentUser.role === 'admin' || currentUser.role === 'hr') {
+                document.getElementById('adminTabBtn').style.display = 'inline-block';
             }
             
             await loadGoals();
             await loadCheckins();
             
-            if (currentUser.role === 'manager' || currentUser.role === 'admin') {
+            if (currentUser.role === 'manager' || currentUser.role === 'admin' || currentUser.role === 'hr') {
                 await loadTeamGoals();
                 await loadSharedGoals();
+            }
+
+            if (currentUser.role === 'admin' || currentUser.role === 'hr') {
+                await loadAdminDashboard();
             }
         }
     } catch (error) {
@@ -696,3 +1065,60 @@ async function checkAuth() {
 
 // Initialize
 checkAuth();
+
+// Charts helper
+window.adminCharts = {};
+
+function destroyAdminCharts() {
+    Object.values(window.adminCharts || {}).forEach(c => {
+        try { c.destroy(); } catch (e) {}
+    });
+    window.adminCharts = {};
+}
+
+function renderAdminCharts(qoqData, distributionData, managerEffectiveness) {
+    destroyAdminCharts();
+
+    // QoQ line chart
+    const qoqEl = document.getElementById('adminQoQ');
+    if (qoqData && qoqData.data && qoqData.data.length) {
+        qoqEl.innerHTML = '<canvas id="chartQoQ" style="height:180px"></canvas>';
+        const labels = qoqData.data.slice().reverse().map(d => d.quarter);
+        const series = qoqData.data.slice().reverse().map(d => Number((d.avg_progress||0).toFixed(1)));
+        const ctx = document.getElementById('chartQoQ').getContext('2d');
+        window.adminCharts.qoq = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets: [{ label: 'Avg Progress %', data: series, borderColor: '#7c3aed', backgroundColor: 'rgba(124,58,237,0.12)', tension: 0.3 }] },
+            options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 100 } } }
+        });
+    }
+
+    // Distribution bar chart (by thrust area)
+    const distEl = document.getElementById('adminDistribution');
+    if (distributionData && distributionData.byThrust && distributionData.byThrust.length) {
+        // create a canvas above the textual breakdown
+        distEl.insertAdjacentHTML('afterbegin', '<canvas id="chartDistribution" style="height:200px;margin-bottom:12px"></canvas>');
+        const labels = distributionData.byThrust.map(b => b.thrust_area);
+        const series = distributionData.byThrust.map(b => b.count);
+        const ctx2 = document.getElementById('chartDistribution').getContext('2d');
+        window.adminCharts.distribution = new Chart(ctx2, {
+            type: 'bar',
+            data: { labels, datasets: [{ label: 'Goals', data: series, backgroundColor: '#22d3ee' }] },
+            options: { responsive: true, plugins: { legend: { display: false } } }
+        });
+    }
+
+    // Manager effectiveness chart
+    const mgrEl = document.getElementById('adminManagerEffectiveness');
+    if (managerEffectiveness && managerEffectiveness.length) {
+        mgrEl.insertAdjacentHTML('afterbegin', '<canvas id="chartManagers" style="height:200px;margin-bottom:12px"></canvas>');
+        const labels = managerEffectiveness.map(m => m.manager_name);
+        const series = managerEffectiveness.map(m => Number(m.checkin_completion_rate || 0));
+        const ctx3 = document.getElementById('chartManagers').getContext('2d');
+        window.adminCharts.managers = new Chart(ctx3, {
+            type: 'bar',
+            data: { labels, datasets: [{ label: 'Check-in Completion %', data: series, backgroundColor: '#34d399' }] },
+            options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 100 } } }
+        });
+    }
+}

@@ -1,5 +1,7 @@
 const express = require('express');
 const db = require('../database');
+const { logAudit } = require('../utils/audit');
+const { notifyEvent } = require('../utils/notifications');
 const { isAuthenticated, isManager } = require('../middleware/auth');
 
 const router = express.Router();
@@ -12,7 +14,7 @@ router.post('/', isAuthenticated, (req, res) => {
   db.run(`
     INSERT INTO checkins (user_id, goal_id, achievement, status, comment, quarter)
     VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT DO UPDATE SET
+    ON CONFLICT(user_id, goal_id, quarter) DO UPDATE SET
       achievement = excluded.achievement,
       status = excluded.status,
       comment = excluded.comment,
@@ -21,15 +23,44 @@ router.post('/', isAuthenticated, (req, res) => {
     if (err) {
       return res.status(500).json({ error: 'Database error' });
     }
-    
+
     // Also update the goal's achievement
     db.run(`
       UPDATE goals 
       SET achievement = ?, updated_at = CURRENT_TIMESTAMP 
       WHERE id = ? AND user_id = ?
-    `, [achievement, goalId, userId]);
-    
-    res.json({ success: true, message: 'Check-in saved successfully' });
+    `, [achievement, goalId, userId], (goalErr) => {
+      if (goalErr) {
+        console.error('Goal achievement update error:', goalErr);
+      }
+      logAudit(userId, 'Check-in', 'goal', goalId, `Check-in saved for quarter ${quarter} status ${status}`);
+      db.get(`SELECT u.email FROM users u JOIN goals g ON g.user_id = u.id WHERE g.id = ?`, [goalId], (emailErr, owner) => {
+        if (!emailErr && owner?.email) {
+          notifyEvent({
+            subject: 'Check-in Submitted',
+            message: `A check-in was submitted for goal ${goalId} in quarter ${quarter}.`,
+            link: `http://localhost:3000/?goalId=${goalId}&tab=checkins`,
+            cardTitle: 'Check-in Submitted',
+            cardSubtitle: `Quarterly update saved for your goal.`,
+            recipients: [owner.email]
+          }).catch(console.error);
+        }
+      });
+      // Notify manager as well
+      db.get(`SELECT u.email FROM users u JOIN users emp ON emp.department = u.department WHERE u.role = 'manager' AND emp.id = ? LIMIT 1`, [userId], (mgrErr, mgr) => {
+        if (!mgrErr && mgr?.email) {
+          notifyEvent({
+            subject: 'Team Member Check-in Submitted',
+            message: `${req.session.name} submitted a check-in for goal ${goalId} (quarter ${quarter}).`,
+            link: `http://localhost:3000/?goalId=${goalId}&tab=team`,
+            cardTitle: 'Team Check-in Submitted',
+            cardSubtitle: `${req.session.name} updated their quarterly progress.`,
+            recipients: [mgr.email]
+          }).catch(console.error);
+        }
+      });
+      res.json({ success: true, message: 'Check-in saved successfully' });
+    });
   });
 });
 
@@ -68,6 +99,16 @@ router.post('/manager-comment', isManager, (req, res) => {
     }
     
     res.json({ success: true, message: 'Manager comment added successfully' });
+    logAudit(managerId, 'Manager Comment', 'goal', goalId, `Added manager comment for employee ${employeeId} quarter ${quarter}`);
+    db.get('SELECT email FROM users WHERE id = ?', [employeeId], (emailErr, employee) => {
+      if (!emailErr && employee?.email) {
+        notifyEvent({
+          subject: 'New Manager Comment',
+          message: `A manager has added a comment to your goal for quarter ${quarter}.`,
+          recipients: [employee.email]
+        }).catch(console.error);
+      }
+    });
   });
 });
 

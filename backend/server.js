@@ -1,51 +1,48 @@
-const express = require('express');
-const session = require('express-session');
-const cors = require('cors');
-const bodyParser = require('body-parser');
 const path = require('path');
+const app = require('./app');
+const escalationService = require('./services/escalationService');
+const config = require('./config');
+const cron = require('node-cron');
 
-const authRoutes = require('./routes/auth');
-const goalRoutes = require('./routes/goals');
-const checkinRoutes = require('./routes/checkins');
-const sharedGoalRoutes = require('./routes/sharedGoals');
+const PORT = config.port || 3000;
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Middleware
-app.use(cors({
-  origin: 'http://localhost:5500',
-  credentials: true
-}));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(session({
-  secret: 'goal-tracking-secret-key',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { 
-    secure: false,
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
-  }
-}));
-
-// Serve static files
-app.use(express.static(path.join(__dirname, '../frontend')));
-
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/goals', goalRoutes);
-app.use('/api/checkins', checkinRoutes);
-app.use('/api/shared-goals', sharedGoalRoutes);
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
-});
-
-// Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Frontend available at http://localhost:${PORT}`);
 });
+
+// Schedule daily escalation and reminders at 02:00 server time
+try {
+  cron.schedule('0 2 * * *', async () => {
+    console.log('Running scheduled escalation and reminder jobs');
+    try {
+      await escalationService.runEscalations(0);
+      await escalationService.runReminders(0);
+      console.log('Scheduled jobs completed');
+    } catch (e) {
+      console.error('Scheduled job error', e);
+    }
+  });
+  console.log('Scheduler initialized: daily jobs at 02:00');
+} catch (e) {
+  console.warn('Scheduler not initialized', e);
+}
+
+module.exports = server;
+
+// Schedule daily escalation and reminders at 02:00 server time
+try {
+  cron.schedule('0 2 * * *', async () => {
+    console.log('Running scheduled escalation and reminder jobs');
+    try {
+      await escalationService.runEscalations(0);
+      await escalationService.runReminders(0);
+      console.log('Scheduled jobs completed');
+    } catch (e) {
+      console.error('Scheduled job error', e);
+    }
+  });
+  console.log('Scheduler initialized: daily jobs at 02:00');
+} catch (e) {
+  console.warn('Scheduler not initialized', e);
+}

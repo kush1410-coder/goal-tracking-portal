@@ -21,12 +21,14 @@
                     <input type="password" id="password" required placeholder="Enter password">
                 </div>
                 <button type="submit" class="btn-primary">Login</button>
+                <button type="button" class="btn-secondary" onclick="loginWithAzureAD()">Login with Azure AD</button>
             </form>
             <div class="demo-credentials">
                 <p><strong>Demo Credentials:</strong></p>
                 <p>Employee: john / password123</p>
                 <p>Manager: sarah / password123</p>
                 <p>Admin: admin / admin123</p>
+                <p>HR: hr / hr123</p>
             </div>
         </div>
     </div>
@@ -44,18 +46,23 @@
 
             <!-- Navigation Tabs -->
             <div class="tabs">
-                <button class="tab-btn active" onclick="showTab('goals')">📋 My Goals</button>
-                <button class="tab-btn" onclick="showTab('checkins')">🔄 Check-ins</button>
-                <button class="tab-btn" onclick="showTab('team')" id="teamTabBtn" style="display:none;">👥 Team Goals</button>
-                <button class="tab-btn" onclick="showTab('shared')" id="sharedTabBtn" style="display:none;">🔗 Shared KPIs</button>
+                <button class="tab-btn active" onclick="showTab(event, 'goals')">📋 My Goals</button>
+                <button class="tab-btn" onclick="showTab(event, 'checkins')">🔄 Check-ins</button>
+                <button class="tab-btn" onclick="showTab(event, 'team')" id="teamTabBtn" style="display:none;">👥 Team Goals</button>
+                <button class="tab-btn" onclick="showTab(event, 'shared')" id="sharedTabBtn" style="display:none;">🔗 Shared KPIs</button>
+                <button class="tab-btn" onclick="showTab(event, 'admin')" id="adminTabBtn" style="display:none;">⚙️ Admin / HR</button>
             </div>
 
             <!-- Tab 1: My Goals -->
             <div id="goalsTab" class="tab-content active">
                 <div class="goals-header">
-                    <h2>My Goal Sheet</h2>
+                    <div>
+                        <h2>My Goal Sheet</h2>
+                        <p class="section-note">Track performance, manage OKRs, and stay aligned with priority outcomes.</p>
+                    </div>
                     <button onclick="showCreateGoalModal()" class="btn-primary">+ Create New Goal</button>
                 </div>
+                <div id="goalsOverview" class="dashboard-grid dashboard-cards"></div>
                 <div id="goalsList" class="goals-list"></div>
                 <div id="weightageWarning" class="warning-message"></div>
             </div>
@@ -63,9 +70,13 @@
             <!-- Tab 2: Check-ins -->
             <div id="checkinsTab" class="tab-content">
                 <div class="checkins-header">
-                    <h2>Quarterly Check-ins</h2>
+                    <div>
+                        <h2>Quarterly Check-ins</h2>
+                        <p class="section-note">Capture progress updates and keep your quarterly delivery on track.</p>
+                    </div>
                     <button onclick="showCheckinModal()" class="btn-primary">Update Quarterly Progress</button>
                 </div>
+                <div id="checkinOverview" class="dashboard-grid dashboard-cards"></div>
                 <div id="checkinsList" class="checkins-list"></div>
                 <div id="managerCommentsList" class="manager-comments"></div>
             </div>
@@ -73,16 +84,86 @@
             <!-- Tab 3: Team Goals -->
             <div id="teamTab" class="tab-content">
                 <div class="team-header">
-                    <h2>Team Goals Overview</h2>
+                    <div>
+                        <h2>Team Goals Overview</h2>
+                        <p class="section-note">Review team goal health, approvals, and top performers in one place.</p>
+                    </div>
                     <button onclick="showSharedGoalModal()" class="btn-primary">Share Department KPI</button>
                 </div>
+                <div id="teamOverview" class="dashboard-grid dashboard-cards"></div>
                 <div id="teamMembersList" class="team-list"></div>
             </div>
 
             <!-- Tab 4: Shared KPIs -->
             <div id="sharedTab" class="tab-content">
-                <h2>Department KPIs</h2>
+                <div class="shared-header">
+                    <h2>Department KPIs</h2>
+                    <p class="section-note">Track shared objectives, alignment, and collective progress across your department.</p>
+                </div>
+                <div id="sharedOverview" class="dashboard-grid dashboard-cards"></div>
                 <div id="sharedGoalsList" class="shared-list"></div>
+            </div>
+
+            <div id="adminTab" class="tab-content">
+                <div class="admin-header">
+                    <h2>Admin / HR Dashboard</h2>
+                </div>
+                <div id="adminSummary" class="admin-summary"></div>
+                <div class="admin-panel">
+                    <div class="admin-card">
+                        <h3>Cycle Configuration</h3>
+                        <form id="adminCycleForm">
+                            <div class="form-group">
+                                <label>Active Cycle</label>
+                                <input type="text" id="adminCycleInput" placeholder="e.g., Q4-2024" required>
+                            </div>
+                            <button type="submit" class="btn-primary">Save Cycle</button>
+                            <button type="button" onclick="runReminderCheck()" class="btn-secondary" style="margin-left:12px;">Send Check-in Reminders</button>
+                        </form>
+                    </div>
+                    <div class="admin-card">
+                        <h3>Organization / Users</h3>
+                        <div id="adminOrgList"></div>
+                    </div>
+                    <div class="admin-card">
+                        <h3>Escalation Rules / Alerts</h3>
+                        <button onclick="runEscalationCheck()" class="btn-primary">Run Escalation Check</button>
+                        <div id="adminEscalationList"></div>
+                        <div id="adminRuleList"></div>
+                    </div>
+                    <div class="admin-card">
+                        <h3>Analytics</h3>
+                        <div id="adminAnalyticsSummary"></div>
+                    </div>
+                    <div class="admin-card">
+                        <h3>Analytics Trends</h3>
+                        <div id="adminTrendsList"></div>
+                    </div>
+                    <div class="admin-card">
+                        <h3>QoQ Trends</h3>
+                        <div id="adminQoQ"></div>
+                    </div>
+                    <div class="admin-card">
+                        <h3>Progress Heatmap</h3>
+                        <div id="adminHeatmap"></div>
+                    </div>
+                    <div class="admin-card">
+                        <h3>Goal Distribution</h3>
+                        <div id="adminDistribution"></div>
+                    </div>
+                    <div class="admin-card">
+                        <h3>Manager Effectiveness</h3>
+                        <div id="adminManagerEffectiveness"></div>
+                    </div>
+                    <div class="admin-card">
+                        <h3>Approved / Locked Goals</h3>
+                        <div id="adminGoalsList"></div>
+                    </div>
+                    <div class="admin-card">
+                        <h3>Audit Log</h3>
+                        <div id="adminAuditList"></div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -160,6 +241,35 @@
             </div>
         </div>
 
+        <div id="editEscalationModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeEditEscalationModal()">&times;</span>
+                <h2>Edit Escalation Rule</h2>
+                <form id="editEscalationForm">
+                    <div class="form-group">
+                        <label>Rule Key</label>
+                        <input type="text" id="editRuleKey" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="editRuleDescription" rows="2" readonly></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Threshold (days)</label>
+                        <input type="number" id="editThreshold" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Active</label>
+                        <select id="editActive">
+                            <option value="1">Active</option>
+                            <option value="0">Inactive</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn-primary">Save Rule</button>
+                </form>
+            </div>
+        </div>
+
         <div id="sharedGoalModal" class="modal">
             <div class="modal-content">
                 <span class="close" onclick="closeSharedGoalModal()">&times;</span>
@@ -201,5 +311,6 @@
     </div>
 
     <script src="app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
 </body>
 </html>

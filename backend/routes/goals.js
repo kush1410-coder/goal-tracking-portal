@@ -1,5 +1,7 @@
 const express = require('express');
 const db = require('../database');
+const { logAudit } = require('../utils/audit');
+const { notifyEvent } = require('../utils/notifications');
 const { isAuthenticated, isManager } = require('../middleware/auth');
 
 const router = express.Router();
@@ -58,7 +60,48 @@ router.get('/', isAuthenticated, (req, res) => {
 router.post('/', isAuthenticated, (req, res) => {
   const { thrustArea, title, description, uom, target, weightage, quarter } = req.body;
   const userId = req.session.userId;
-  
+
+  if (!thrustArea || !title || !uom || !target || isNaN(parseFloat(weightage))) {
+    return res.status(400).json({ error: 'All required goal fields must be completed correctly' });
+  }
+
+  const numericWeight = parseFloat(weightage);
+  if (numericWeight < 10 || numericWeight > 100) {
+    return res.status(400).json({ error: 'Minimum weightage per goal is 10% and must be at most 100%' });
+  }
+
+  const quarterValue = quarter && quarter.trim() ? quarter.trim() : null;
+
+  const insertGoal = (targetQuarter) => {
+    db.run(`
+      INSERT INTO goals (user_id, thrust_area, title, description, uom, target, weightage, status, quarter)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    `, [userId, thrustArea, title, description, uom, target, numericWeight, targetQuarter], function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      logAudit(userId, 'Create Goal', 'goal', this.lastID, `Created goal ${title} for ${targetQuarter}`);
+      db.get("SELECT email FROM users WHERE department = ? AND role = 'manager' LIMIT 1", [req.session.department], (mgrErr, manager) => {
+        if (!mgrErr && manager?.email) {
+          notifyEvent({
+            subject: 'New Goal Submitted',
+            message: `A new goal titled '${title}' was submitted by ${req.session.name} and awaits approval.`,
+            link: `http://localhost:3000/?goalId=${this.lastID}`,
+            cardTitle: 'New Goal Awaiting Approval',
+            cardSubtitle: `Goal '${title}' submitted by ${req.session.name}.`,
+            recipients: [manager.email]
+          }).catch(console.error);
+        }
+      });
+      res.json({ 
+        success: true, 
+        id: this.lastID,
+        message: 'Goal created successfully and pending approval'
+      });
+    });
+  };
+
   // Check number of goals
   db.get("SELECT COUNT(*) as count FROM goals WHERE user_id = ? AND status != 'archived'", [userId], (err, row) => {
     if (err) {
@@ -69,36 +112,28 @@ router.post('/', isAuthenticated, (req, res) => {
       return res.status(400).json({ error: 'Maximum 8 goals per employee' });
     }
     
-    if (weightage < 10) {
-      return res.status(400).json({ error: 'Minimum weightage per goal is 10%' });
-    }
-    
     // Check total weightage
     db.get("SELECT SUM(weightage) as total FROM goals WHERE user_id = ? AND status != 'archived'", [userId], (err, weightRow) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+
       let totalWeight = weightRow.total || 0;
-      totalWeight += weightage;
-      
-      if (Math.abs(totalWeight - 100) > 0.01 && totalWeight < 100) {
-        // Allow if total will be exactly 100 after adding
-        if (totalWeight > 100) {
-          return res.status(400).json({ error: 'Total weightage cannot exceed 100%' });
-        }
+      totalWeight += numericWeight;
+      if (totalWeight > 100) {
+        return res.status(400).json({ error: 'Total weightage cannot exceed 100%' });
       }
       
-      db.run(`
-        INSERT INTO goals (user_id, thrust_area, title, description, uom, target, weightage, status, quarter)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-      `, [userId, thrustArea, title, description, uom, target, weightage, quarter || 'Q4-2024'], function(err) {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        
-        res.json({ 
-          success: true, 
-          id: this.lastID,
-          message: 'Goal created successfully and pending approval'
+      if (quarterValue) {
+        insertGoal(quarterValue);
+      } else {
+        db.get("SELECT active_cycle FROM cycle_settings ORDER BY id DESC LIMIT 1", [], (err, row) => {
+          if (err) {
+            return res.status(500).json({ error: 'Database error' });
+          }
+          insertGoal(row?.active_cycle || 'Q4-2024');
         });
-      });
+      }
     });
   });
 });
@@ -111,7 +146,19 @@ router.put('/:id/approve', isManager, (req, res) => {
     if (err) {
       return res.status(500).json({ error: 'Database error' });
     }
-    
+    logAudit(req.session.userId, 'Approve Goal', 'goal', goalId, 'Approved goal');
+    db.get(`SELECT u.email FROM users u JOIN goals g ON g.user_id = u.id WHERE g.id = ?`, [goalId], (emailErr, owner) => {
+      if (!emailErr && owner?.email) {
+        notifyEvent({
+          subject: 'Goal Approved',
+          message: `Your goal has been approved by ${req.session.name}.`,
+          link: `http://localhost:3000/?goalId=${goalId}`,
+          cardTitle: 'Goal Approved',
+          cardSubtitle: `Your goal was approved by ${req.session.name}.`,
+          recipients: [owner.email]
+        }).catch(console.error);
+      }
+    });
     res.json({ success: true, message: 'Goal approved successfully' });
   });
 });
@@ -124,8 +171,43 @@ router.put('/:id/rework', isManager, (req, res) => {
     if (err) {
       return res.status(500).json({ error: 'Database error' });
     }
-    
+    logAudit(req.session.userId, 'Request Rework', 'goal', goalId, 'Requested rework for goal');
+    db.get(`SELECT u.email FROM users u JOIN goals g ON g.user_id = u.id WHERE g.id = ?`, [goalId], (emailErr, owner) => {
+      if (!emailErr && owner?.email) {
+        notifyEvent({
+          subject: 'Goal Rework Requested',
+          message: `Your goal requires rework: a manager has requested changes.`,
+          link: `http://localhost:3000/?goalId=${goalId}`,
+          cardTitle: 'Goal Rework Requested',
+          cardSubtitle: `A manager requested changes on your goal.`,
+          recipients: [owner.email]
+        }).catch(console.error);
+      }
+    });
     res.json({ success: true, message: 'Rework requested' });
+  });
+});
+
+// Reject goal (Manager/Admin)
+router.put('/:id/reject', isManager, (req, res) => {
+  const goalId = req.params.id;
+
+  db.run("UPDATE goals SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [goalId], function(err) {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    logAudit(req.session.userId, 'Reject Goal', 'goal', goalId, 'Rejected goal');
+    db.get(`SELECT u.email FROM users u JOIN goals g ON g.user_id = u.id WHERE g.id = ?`, [goalId], (emailErr, owner) => {
+      if (!emailErr && owner?.email) {
+        notifyEvent({
+          subject: 'Goal Rejected',
+          message: `Your goal has been rejected by ${req.session.name}. Please revise and resubmit.`,
+          link: `http://localhost:3000/?goalId=${goalId}`,
+          cardTitle: 'Goal Rejected',
+          cardSubtitle: `Please update your goal and resubmit for approval.`,
+          recipients: [owner.email]
+        }).catch(console.error);
+      }
+    });
+    res.json({ success: true, message: 'Goal rejected' });
   });
 });
 
@@ -141,6 +223,10 @@ router.put('/:id', isAuthenticated, (req, res) => {
       return res.status(500).json({ error: 'Database error' });
     }
     
+    if (!goal) {
+      return res.status(404).json({ error: 'Goal not found' });
+    }
+
     if (goal.status === 'approved' && req.session.role !== 'admin') {
       return res.status(403).json({ error: 'Approved goals cannot be edited without admin intervention' });
     }
@@ -149,34 +235,72 @@ router.put('/:id', isAuthenticated, (req, res) => {
       return res.status(403).json({ error: 'Cannot edit other users goals' });
     }
     
-    let updates = [];
-    let params = [];
+    const updates = [];
+    const params = [];
+
+    const updateGoal = () => {
+      updates.push("updated_at = CURRENT_TIMESTAMP");
+      params.push(goalId);
+
+      db.run(`UPDATE goals SET ${updates.join(', ')} WHERE id = ?`, params, function(err) {
+        if (err) {
+          return res.status(500).json({ error: 'Database error' });
+        }
+        logAudit(userId, 'Update Goal', 'goal', goalId, 'Updated goal');
+        // Notify manager of update
+        db.get(`SELECT u.email FROM users u JOIN users owner ON owner.department = u.department WHERE u.role = 'manager' AND owner.id = ? LIMIT 1`, [goal.user_id], (mgrErr, mgr) => {
+          if (!mgrErr && mgr?.email) {
+            notifyEvent({
+              subject: 'Goal Updated',
+              message: `A goal was updated for ${goal.user_id}. Please review.`,
+              link: `http://localhost:3000/?goalId=${goalId}`,
+              cardTitle: 'Goal Updated',
+              cardSubtitle: `A team member updated a goal and may need your attention.`,
+              recipients: [mgr.email]
+            }).catch(console.error);
+          }
+        });
+        res.json({ success: true, message: 'Goal updated successfully' });
+      });
+    };
     
-    if (weightage) {
-      if (weightage < 10) {
-        return res.status(400).json({ error: 'Minimum weightage is 10%' });
+    if (weightage !== undefined) {
+      if (isNaN(weightage) || weightage < 10 || weightage > 100) {
+        return res.status(400).json({ error: 'Weightage must be a number between 10 and 100' });
       }
-      updates.push("weightage = ?");
-      params.push(weightage);
-    }
-    
-    if (target) {
-      updates.push("target = ?");
-      params.push(target);
-    }
-    
-    updates.push("updated_at = CURRENT_TIMESTAMP");
-    params.push(goalId);
-    
-    db.run(`UPDATE goals SET ${updates.join(', ')} WHERE id = ?`, params, function(err) {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
+
+      db.get("SELECT SUM(weightage) as total FROM goals WHERE user_id = ? AND status != 'archived' AND id != ?", [userId, goalId], (err, row) => {
+        if (err) {
+          return res.status(500).json({ error: 'Database error' });
+        }
+
+        const totalWeight = (row.total || 0) + weightage;
+        if (totalWeight > 100) {
+          return res.status(400).json({ error: 'Total weightage cannot exceed 100%' });
+        }
+
+        updates.push("weightage = ?");
+        params.push(weightage);
+
+        if (target) {
+          updates.push("target = ?");
+          params.push(target);
+        }
+
+        updateGoal();
+      });
+    } else {
+      if (target) {
+        updates.push("target = ?");
+        params.push(target);
       }
-      
-      res.json({ success: true, message: 'Goal updated successfully' });
-    });
+      updateGoal();
+    }
   });
 });
+
+// Notify manager when a goal is updated by an employee
+// (hook into the existing update route by using audit and notify after update)
 
 // Update achievement
 router.put('/:id/achievement', isAuthenticated, (req, res) => {

@@ -1,5 +1,7 @@
 const express = require('express');
 const db = require('../database');
+const { logAudit } = require('../utils/audit');
+const { notifyEvent } = require('../utils/notifications');
 const { isAuthenticated, isManager, isAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -8,7 +10,19 @@ const router = express.Router();
 router.post('/', isManager, (req, res) => {
   const { title, description, uom, target, department, assignedTo, primaryOwnerId } = req.body;
   const createdBy = req.session.userId;
-  
+
+  if (!title || !uom || !target || !department) {
+    return res.status(400).json({ error: 'Required fields missing' });
+  }
+
+  if (!Array.isArray(assignedTo) || assignedTo.length === 0) {
+    return res.status(400).json({ error: 'At least one employee must be assigned' });
+  }
+
+  if (!primaryOwnerId) {
+    return res.status(400).json({ error: 'Primary owner is required' });
+  }
+
   // Create shared goal record
   db.run(`
     INSERT INTO shared_goals (title, description, uom, target, department, created_by, primary_owner_id)
@@ -17,24 +31,56 @@ router.post('/', isManager, (req, res) => {
     if (err) {
       return res.status(500).json({ error: 'Database error' });
     }
-    
+
     const sharedGoalId = this.lastID;
-    
-    // Assign to selected employees
-    assignedTo.forEach(employeeId => {
-      db.run(`
-        INSERT INTO shared_goal_assignments (shared_goal_id, user_id)
-        VALUES (?, ?)
-      `, [sharedGoalId, employeeId]);
-      
-      // Create goal for each employee (read-only title/target)
-      db.run(`
-        INSERT INTO goals (user_id, thrust_area, title, description, uom, target, weightage, status, is_shared, shared_from_id, quarter)
-        VALUES (?, 'Shared KPI', ?, ?, ?, ?, 10, 'approved', 1, ?, 'Q4-2024')
-      `, [employeeId, title, description, uom, target, sharedGoalId]);
+    let completed = 0;
+    let hasError = false;
+    const expectedOperations = assignedTo.length * 2;
+
+    const operationComplete = () => {
+      completed += 1;
+      if (completed === expectedOperations) {
+        if (hasError) {
+          return res.status(500).json({ error: 'Failed to complete shared KPI creation' });
+        }
+        res.json({ success: true, message: 'Department KPI shared successfully' });
+      }
+    };
+
+    db.serialize(() => {
+      assignedTo.forEach(employeeId => {
+        db.run(`
+          INSERT INTO shared_goal_assignments (shared_goal_id, user_id)
+          VALUES (?, ?)
+        `, [sharedGoalId, employeeId], err => {
+          if (err) {
+            hasError = true;
+            console.error('Assignment insert error:', err);
+          }
+          operationComplete();
+        });
+
+        db.run(`
+          INSERT INTO goals (user_id, thrust_area, title, description, uom, target, weightage, status, is_shared, shared_from_id, quarter)
+          VALUES (?, 'Shared KPI', ?, ?, ?, ?, 10, 'approved', 1, ?, 'Q4-2024')
+        `, [employeeId, title, description, uom, target, sharedGoalId], err => {
+          if (err) {
+            hasError = true;
+            console.error('Shared goal goal insert error:', err);
+          }
+          operationComplete();
+        });
+      });
     });
-    
-    res.json({ success: true, message: 'Department KPI shared successfully' });
+    logAudit(createdBy, 'Create Shared KPI', 'shared_goal', sharedGoalId, `Shared KPI '${title}' for department ${department}`);
+    db.all(`SELECT email FROM users WHERE id = ? OR id IN (${assignedTo.map(() => '?').join(',')})`, [primaryOwnerId, ...assignedTo], (err, addresses) => {
+      const recipientEmails = Array.isArray(addresses) ? addresses.map(u => u.email).filter(Boolean) : [];
+      notifyEvent({
+        subject: 'Shared KPI Created',
+        message: `A shared KPI '${title}' was created for department ${department}.`,
+        recipients: recipientEmails
+      }).catch(console.error);
+    });
   });
 });
 
@@ -81,38 +127,37 @@ router.get('/', isAuthenticated, (req, res) => {
 router.put('/:id/achievement', isAuthenticated, (req, res) => {
   const sharedGoalId = req.params.id;
   const { achievement } = req.body;
-  
+
   db.get("SELECT primary_owner_id FROM shared_goals WHERE id = ?", [sharedGoalId], (err, sharedGoal) => {
     if (err) {
       return res.status(500).json({ error: 'Database error' });
     }
-    
+
     if (!sharedGoal) {
       return res.status(404).json({ error: 'Shared goal not found' });
     }
-    
-    // Update primary owner's goal
+
+    if (req.session.role !== 'admin' && req.session.userId !== sharedGoal.primary_owner_id) {
+      return res.status(403).json({ error: 'Only the primary owner or admin can update this achievement' });
+    }
+
+    // Sync achievement to all goals created from this shared KPI
     db.run(`
       UPDATE goals 
       SET achievement = ?, updated_at = CURRENT_TIMESTAMP 
-      WHERE shared_from_id = ? AND user_id = ?
-    `, [achievement, sharedGoalId, sharedGoal.primary_owner_id], (err) => {
+      WHERE shared_from_id = ?
+    `, [achievement, sharedGoalId], (err) => {
       if (err) {
         return res.status(500).json({ error: 'Database error' });
       }
-      
-      // Sync to all other assigned users
-      db.run(`
-        UPDATE goals 
-        SET achievement = ?, updated_at = CURRENT_TIMESTAMP 
-        WHERE shared_from_id = ?
-      `, [achievement, sharedGoalId], (err) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        
-        res.json({ success: true, message: 'Achievement synced to all team members' });
-      });
+
+      logAudit(req.session.userId, 'Update Shared Achievement', 'shared_goal', sharedGoalId, `Updated shared KPI achievement to ${achievement}`);
+      notifyEvent({
+        subject: 'Shared KPI Achievement Updated',
+        message: `Shared KPI achievement has been updated to ${achievement}.`,
+        recipients: []
+      }).catch(console.error);
+      res.json({ success: true, message: 'Achievement synced to all team members' });
     });
   });
 });

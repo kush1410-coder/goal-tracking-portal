@@ -1,7 +1,8 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
-const db = new sqlite3.Database(path.join(__dirname, 'goal_tracking.db'));
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'goal_tracking.db');
+const db = new sqlite3.Database(dbPath);
 
 // Initialize database tables
 db.serialize(() => {
@@ -58,6 +59,10 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_checkins_unique ON checkins(user_id, goal_id, quarter)
+  `);
+
   // Manager comments table
   db.run(`
     CREATE TABLE IF NOT EXISTS manager_comments (
@@ -103,8 +108,81 @@ db.serialize(() => {
     )
   `);
 
+  // Cycle settings for admin configuration
+  db.run(`
+    CREATE TABLE IF NOT EXISTS cycle_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      active_cycle TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    INSERT INTO cycle_settings (active_cycle)
+    SELECT 'Q4-2024'
+    WHERE NOT EXISTS (SELECT 1 FROM cycle_settings)
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      action TEXT,
+      target_type TEXT,
+      target_id INTEGER,
+      details TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
+  // Escalation rules and logs for rule-based notifications
+  db.run(`
+    CREATE TABLE IF NOT EXISTS escalation_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_key TEXT UNIQUE,
+      description TEXT,
+      threshold_days INTEGER,
+      active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS escalation_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_key TEXT,
+      department TEXT,
+      triggered_for TEXT,
+      details TEXT,
+      created_by INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    )
+  `);
+
+  db.run(`
+    INSERT INTO escalation_rules (rule_key, description, threshold_days)
+    SELECT 'goal_submission', 'Employee has not submitted goals within N days of active cycle', 7
+    WHERE NOT EXISTS (SELECT 1 FROM escalation_rules WHERE rule_key = 'goal_submission')
+  `);
+
+  db.run(`
+    INSERT INTO escalation_rules (rule_key, description, threshold_days)
+    SELECT 'goal_approval', 'Manager has not approved pending goals within N days of submission', 5
+    WHERE NOT EXISTS (SELECT 1 FROM escalation_rules WHERE rule_key = 'goal_approval')
+  `);
+
+  db.run(`
+    INSERT INTO escalation_rules (rule_key, description, threshold_days)
+    SELECT 'checkin_missing', 'Quarterly check-in not completed within the active window', 14
+    WHERE NOT EXISTS (SELECT 1 FROM escalation_rules WHERE rule_key = 'checkin_missing')
+  `);
+
   // Insert sample data
-  insertSampleData();
+  if (process.env.NODE_ENV !== 'test') {
+    insertSampleData();
+  }
 });
 
 function insertSampleData() {
@@ -117,6 +195,7 @@ function insertSampleData() {
         { username: 'john', password: 'password123', name: 'John Doe', email: 'john@example.com', role: 'employee', department: 'Sales' },
         { username: 'sarah', password: 'password123', name: 'Sarah Smith', email: 'sarah@example.com', role: 'manager', department: 'Sales' },
         { username: 'admin', password: 'admin123', name: 'Admin User', email: 'admin@example.com', role: 'admin', department: 'All' },
+        { username: 'hr', password: 'hr123', name: 'HR User', email: 'hr@example.com', role: 'hr', department: 'All' },
         { username: 'jane', password: 'password123', name: 'Jane Wilson', email: 'jane@example.com', role: 'employee', department: 'Sales' }
       ];
 
