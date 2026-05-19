@@ -1,7 +1,10 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
-const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'goal_tracking.db');
+let dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'goal_tracking.db');
+if (process.env.VERCEL) {
+  dbPath = path.join('/tmp', 'goal_tracking.db');
+}
 const db = new sqlite3.Database(dbPath);
 
 // Initialize database tables
