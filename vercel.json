@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "cd backend && npm install",
+  "buildCommand": "rm -rf backend/node_modules node_modules && npm install --prefix backend",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.js" },
     { "source": "/(.*)", "destination": "/frontend/$1" }

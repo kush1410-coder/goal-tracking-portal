@@ -2,8 +2,7 @@
   "name": "goal-tracking-portal",
   "version": "1.0.0",
   "scripts": {
-    "build": "echo 'No build step required'",
-    "install": "cd backend && npm install"
+    "build": "echo 'No build step required'"
   },
   "dependencies": {
     "express": "^4.18.2",

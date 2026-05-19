@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Goal Tracking Portal Architecture</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<style>
+  body { margin: 0; padding: 0; }
+  .mermaid { margin: 0; }
+</style>
+</head>
+<body>
+<div class="mermaid">
+graph TD
+    subgraph Frontend Client
+        UI["Browser (HTML / CSS / Vanilla JS)"]
+    end
+
+    subgraph Backend Server [Node.js & Express]
+        API["Express App (server.js)"]
+        AuthMiddleware["Auth Middleware (express-session)"]
+        Routes["API Routes (Goals, Check-ins, Admin)"]
+        Services["Services (Escalation & Reminders)"]
+        Cron["Task Scheduler (node-cron)"]
+        Notifications["Notification Utility (Email & Teams)"]
+    end
+
+    subgraph Database
+        SQLite[("SQLite (goal_tracking.db)")]
+    end
+
+    UI -- HTTP Requests --> API
+    API --> AuthMiddleware
+    AuthMiddleware -- Validated --> Routes
+    Routes -- Read/Write --> SQLite
+    Routes -- Trigger --> Notifications
+    
+    Cron -- Daily Trigger --> Services
+    Services -- Read/Write --> SQLite
+    Services -- Send Alerts --> Notifications
+</div>
+<script>
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'strict' });
+</script>
+</body>
+</html>
